@@ -1,0 +1,81 @@
+---
+- name: Add PostgreSQL repo
+  apt_repository:
+    repo: deb http://apt.postgresql.org/pub/repos/apt/ {{ ansible_distribution_release }}-pgdg main
+    state: present
+
+- name: Import the repository signing key
+  apt_key:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    state: present
+
+- name: Install postgresql
+  apt:
+    name: "{{ item }}"
+    state: present
+    update_cache: yes
+  with_items:
+    - python-psycopg2
+    - postgresql-{{ postgresql_version }}
+
+- name: Change postgresql.conf
+  lineinfile:
+    path: /etc/postgresql/{{ postgresql_version }}/main/postgresql.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  with_items:
+    - { regexp: "listen_addresses", line: "listen_addresses = '*'" }
+    - { regexp: "wal_level",        line: "wal_level = replica" }
+    - { regexp: "hot_standby",      line: "hot_standby = on" }
+    - { regexp: "max_wal_senders",  line: "max_wal_senders = 8" }
+  register: psqlconf
+
+- name: Change pg_hba.conf
+  template: 
+    src: pg_hba.conf.j2
+    dest: /etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf
+  register: hba
+
+- name: Reload postgresql
+  systemd: "name=postgresql state=reloaded"
+  when: hba is changed and psqlconf is not changed
+
+- name: Restart postgresql
+  systemd: "name=postgresql state=restarted"
+  when: psqlconf is changed and psqlconf is changed
+
+- name: Set password postgres user on master
+  postgresql_user:
+    name: postgres
+    password: "{{ postgresql_password }}"
+    encrypted: no
+  become: yes
+  become_user: "postgres"
+  when: pg_role is defined and pg_role == 'master'
+
+- name: Stop postgresql on slave 
+  systemd: name=postgresql state=stopped
+  when:
+    - pg_role is defined and pg_role == 'slave'
+
+- name: Set .pgpass on slave
+  template: src=.pgpass.j2 dest=/var/lib/postgresql/.pgpass owner=postgres group=postgres mode=0600
+  when:
+    - pg_role is defined and pg_role == 'slave'
+
+- name: Remove old data dir on postgresql slave node
+  file: path=/var/lib/postgresql/9.6/main/ state=absent
+  when:
+    - pg_role is defined and pg_role == 'slave'
+
+- name: Get all data from master
+  shell: 'pg_basebackup -P -R -X stream -c fast -h {{ hostvars[groups["pgsql"].0]["ansible_host"] }} -U postgres -D /var/lib/postgresql/9.6/main/'
+  when:
+    - pg_role is defined and pg_role == 'slave'
+  become: yes
+  become_user: postgres
+
+- name: start postgresql on slave node
+  systemd: name=postgresql state=started
+  when:
+    - pg_role is defined and pg_role == 'slave'

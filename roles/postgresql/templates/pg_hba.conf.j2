@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+local   all             postgres                                peer
+local   all             all                                     peer
+host    all             all             127.0.0.1/32            md5
+host    all             all             ::1/128                 md5
+{% if pg_role is defined and pg_role == 'master' %}
+host    replication     postgres        {{ hostvars.pg02.ansible_host }}/32         md5
+{% endif %}

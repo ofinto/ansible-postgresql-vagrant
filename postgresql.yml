@@ -1,0 +1,6 @@
+- hosts: pgsql
+  vars:
+    postgresql_version: 9.6
+    postgresql_password: 7xIzbDEfmkWcLcSI6yEe3L
+  roles:
+    - role: postgresql
